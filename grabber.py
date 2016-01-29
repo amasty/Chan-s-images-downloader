@@ -47,7 +47,7 @@ class ImageGrabber(object):
                 yield pool
 
         logging.info('download finished for {0}'.format(datetime.datetime.now()-self.start_time))
-        logging.info('downloaded {0} images / {1}'.format(self.count, self.total))
+        logging.info('downloaded {0} images / {1}'.format(self.downloaded, self.total))
         exit('All done')
 
     @gen.coroutine
