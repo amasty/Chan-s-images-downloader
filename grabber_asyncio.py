@@ -3,23 +3,23 @@ import re
 import logging
 import argparse
 import datetime
-from tornado import ioloop, gen, httpclient
+import asyncio
+import aiohttp
 from lxml import html
 
 
 class ImageGrabber(object):
     def __init__(self):
         self.downloaded = 0
+
         self.total = 0
         self.start_time = datetime.datetime.now()
 
-    def get_source_thread(self, url):
-        try:
-            response = httpclient.HTTPClient().fetch(url)
-        except:
-            raise BaseException('please check the url')
-
-        return response.body.decode()
+    async def fetch_page(self, client, url):
+        async with client.get(url) as response:
+            assert response.status == 200
+            source_page = await response.read()
+        return source_page.decode()
 
     def find_images(self, source_page, images_ext):
         tree = html.fromstring(source_page)
@@ -32,26 +32,32 @@ class ImageGrabber(object):
                 self.total += 1
                 yield src
 
-    @gen.coroutine
-    def start_download(self, domain, source_page, images_ext, dir, full_path=False, max_threads=15):
+    def start_download(self, url, domain, images_ext, dir, full_path=False, max_threads=15):
         logging.info('start download')
         pool = []
+        loop = asyncio.get_event_loop()
+        client = aiohttp.ClientSession(loop=loop)
+
+        source_page = loop.run_until_complete(self.fetch_page(client, url))
+
         for image in self.find_images(source_page, images_ext):
-            pool.append(self.download_image(image, domain, dir, full_path, max_threads))
+            pool.append(self.download_image(client, image, domain, dir, full_path, max_threads))
 
             if len(pool) == max_threads:
-                yield pool
+                loop.run_until_complete(asyncio.wait(pool))
                 pool = []
 
         if len(pool):
-                yield pool
+                loop.run_until_complete(asyncio.wait(pool))
 
         logging.info('download finished for {0}'.format(datetime.datetime.now()-self.start_time))
         logging.info('downloaded images: {0}/{1}'.format(self.downloaded, self.total))
+        client.close()
+        loop.close()
         exit('All done')
 
-    @gen.coroutine
-    def download_image(self, image, domain, dir, full_path, max_threads):
+    @asyncio.coroutine
+    def download_image(self, client, image, domain, dir, full_path, max_threads):
         url = domain + image
 
         if not full_path:
@@ -64,17 +70,15 @@ class ImageGrabber(object):
 
         # logging.info('getting image: {0}'.format(image))
         try:
-            res = yield httpclient.AsyncHTTPClient(max_clients=max_threads).fetch(
-                            httpclient.HTTPRequest(url, request_timeout=100, connect_timeout=50), raise_error=True
-                        )
+            res = yield from client.get(url)
         except Exception as e:
             raise BaseException('cant get image {0}'.format(image))
-
-        if res.code == 200:
+        else:
             self.downloaded += 1
             with open(os.path.join(dir, name), 'wb') as f:
                 # logging.info('saving image: {0}'.format(image))
-                f.write(res.body)
+                img = yield from res.read()
+                f.write(img)
 
     def grabb(self, url, images_ext, dir=None):
         if not re.search('http', url):
@@ -89,8 +93,7 @@ class ImageGrabber(object):
         url_split = url.split('/')
         domain = '{0}//{1}/'.format(url_split[0], url_split[2])
 
-        source_page = self.get_source_thread(url)
-        self.start_download(domain, source_page, images_ext, dir, full_path)
+        self.start_download(url, domain, images_ext, dir, full_path)
 
 
 if __name__ == '__main__':
@@ -107,5 +110,3 @@ if __name__ == '__main__':
 
     imagegrabber = ImageGrabber()
     imagegrabber.grabb(args.url, images_ext, args.dir)
-
-    ioloop.IOLoop.current().start()
