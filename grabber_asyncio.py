@@ -11,7 +11,6 @@ from lxml import html
 class ImageGrabber(object):
     def __init__(self):
         self.downloaded = 0
-
         self.total = 0
         self.start_time = datetime.datetime.now()
 
