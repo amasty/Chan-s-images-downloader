@@ -2,6 +2,7 @@ import os
 import re
 import logging
 import argparse
+import datetime
 from tornado import ioloop, gen, httpclient
 from lxml import html
 
@@ -10,6 +11,7 @@ class ImageGrabber(object):
     def __init__(self):
         self.downloaded = 0
         self.total = 0
+        self.start_time = datetime.datetime.now()
 
     def get_source_thread(self, url):
         try:
@@ -17,9 +19,7 @@ class ImageGrabber(object):
         except:
             raise BaseException('please check the url')
 
-        source_page = response.body.decode()
-
-        return source_page
+        return response.body.decode()
 
     def find_images(self, source_page, images_ext):
         tree = html.fromstring(source_page)
@@ -39,19 +39,19 @@ class ImageGrabber(object):
         for image in self.find_images(source_page, images_ext):
             pool.append(self.download_image(image, domain, dir, full_path, max_threads))
 
-            if len(pool) > max_threads - 1:
+            if len(pool) == max_threads:
                 yield pool
                 pool = []
 
         if len(pool):
                 yield pool
 
-        logging.info('download finished')
+        logging.info('download finished for {0}'.format(datetime.datetime.now()-self.start_time))
         logging.info('downloaded {0} images / {1}'.format(self.count, self.total))
         exit('All done')
 
     @gen.coroutine
-    def download_image(self, image, domain, dir, full_path=False, max_threads=15):
+    def download_image(self, image, domain, dir, full_path, max_threads):
         url = domain + image
 
         if not full_path:
@@ -63,12 +63,10 @@ class ImageGrabber(object):
         name = image.split('/')[-1]
 
         logging.info('getting image: {0}'.format(image))
-
         try:
             res = yield httpclient.AsyncHTTPClient(max_clients=max_threads).fetch(
                             httpclient.HTTPRequest(url, request_timeout=100, connect_timeout=50), raise_error=True
                         )
-
         except Exception as e:
             raise BaseException('cant get image {0}'.format(image))
 
