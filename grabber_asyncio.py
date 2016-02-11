@@ -20,27 +20,28 @@ class ImageGrabber(object):
             source_page = await response.read()
         return source_page.decode()
 
-    def find_images(self, source_page, images_ext):
+    def find_images(self, domain, source_page, images_ext):
         tree = html.fromstring(source_page)
         links = tree.xpath('.//a[@target="_blank"]')
 
         for link in links:
             src = link.attrib['href']
-            ext = src.split('.')[-1]
-            if ext in images_ext:
+            if src.endswith(images_ext):
                 self.total += 1
-                yield src
+                url = domain + src
+                name = src.split('/')[-1]
+                yield url, name
 
-    def start_download(self, url, domain, images_ext, dir, full_path=False, max_threads=15):
+    def start_download(self, thread_url, domain, images_ext, dir, max_threads=15):
         logging.info('start download')
         pool = []
         loop = asyncio.get_event_loop()
         client = aiohttp.ClientSession(loop=loop)
 
-        source_page = loop.run_until_complete(self.fetch_page(client, url))
+        source_page = loop.run_until_complete(self.fetch_page(client, thread_url))
 
-        for image in self.find_images(source_page, images_ext):
-            pool.append(self.download_image(client, image, domain, dir, full_path, max_threads))
+        for image_url, image_name in self.find_images(domain, source_page, images_ext):
+            pool.append(self.download_image(client, image_url, image_name, dir, max_threads))
 
             if len(pool) == max_threads:
                 loop.run_until_complete(asyncio.wait(pool))
@@ -56,56 +57,50 @@ class ImageGrabber(object):
         exit('All done')
 
     @asyncio.coroutine
-    def download_image(self, client, image, domain, dir, full_path, max_threads):
-        url = domain + image
-
-        if not full_path:
-            base_dir = os.path.dirname(__file__)
-
-        dir = os.path.join(base_dir, dir)
-        os.makedirs(dir, exist_ok=True)
-
-        name = image.split('/')[-1]
-
-        # logging.info('getting image: {0}'.format(image))
+    def download_image(self, client, url, image_name, dir, max_threads):
+        logging.debug('getting image: {0}'.format(image_name))
         try:
             res = yield from client.get(url)
         except Exception as e:
-            raise BaseException('cant get image {0}'.format(image))
+            raise Exception('cant get image {0}'.format(image_name))
         else:
             self.downloaded += 1
-            with open(os.path.join(dir, name), 'wb') as f:
-                # logging.info('saving image: {0}'.format(image))
+            with open(os.path.join(dir, image_name), 'wb') as f:
+                logging.debug('saving image: {0}'.format(image_name))
                 img = yield from res.read()
                 f.write(img)
 
     def grabb(self, url, images_ext, dir=None):
         if not re.search('http', url):
-            raise BaseException('url should start with http/https')
+            raise Exception('url should start with http/https')
 
         if dir is None:
-            dir = url.split('/')[-1].split('.')[0]
-            full_path = False
-        else:
-            full_path = True
+            base_dir = os.path.dirname(__file__)
+            dir = os.path.join(base_dir, url.split('/')[-1].split('.')[0])
+
+        os.makedirs(dir, exist_ok=True)
 
         url_split = url.split('/')
         domain = '{0}//{1}/'.format(url_split[0], url_split[2])
 
-        self.start_download(url, domain, images_ext, dir, full_path)
+        self.start_download(url, domain, images_ext, dir)
 
 
 if __name__ == '__main__':
-    images_ext = ['webm', 'jpeg', 'jpg', 'png', 'gif']
+    images_ext = ('webm', 'jpeg', 'jpg', 'png', 'gif')
 
     argparser = argparse.ArgumentParser()
     argparser.add_argument("--url", help="Thread's url")
     argparser.add_argument("--dir", help="Path to dir for images")
+    argparser.add_argument("--debug")
     args = argparser.parse_args()
     if not args.url:
-        raise BaseException('Use --help for args')
+        raise exit('Use --help for args')
 
-    logging.basicConfig(level = logging.DEBUG)
+    level = 20
+    if args.debug:
+        level = 10
+    logging.basicConfig(level = level)
 
     imagegrabber = ImageGrabber()
     imagegrabber.grabb(args.url, images_ext, args.dir)
